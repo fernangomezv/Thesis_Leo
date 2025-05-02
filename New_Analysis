@@ -1,3 +1,12 @@
+# Libraries ----
+library(tidyverse)    # Incluye dplyr, ggplot2, tidyr, readr
+library(openxlsx)     # Para leer y guardar Excel
+library(lme4)         # Modelos mixtos
+library(car)          # ANOVA tipo III
+library(emmeans)      # Comparaciones post hoc
+library(ggpubr)       # Opcional, si usas sus themes o funciones extra
+
+
 # New Analysis ----
 leo <- read.xlsx("path/Efecto_24h_48h.xlsx", sheet=3)
 str(leo)
