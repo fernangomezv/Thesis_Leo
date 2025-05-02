@@ -1,5 +1,5 @@
 # New Analysis ----
-leo <- read.xlsx("G:/Mi unidad/Tesis_Leonardo/New Analysis/Efecto_24h_48h.xlsx", sheet=3)
+leo <- read.xlsx("path/Efecto_24h_48h.xlsx", sheet=3)
 str(leo)
 
 # Preparar variables categóricas ----
