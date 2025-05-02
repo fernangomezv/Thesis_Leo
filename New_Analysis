@@ -1,0 +1,237 @@
+# New Analysis ----
+leo <- read.xlsx("G:/Mi unidad/Tesis_Leonardo/New Analysis/Efecto_24h_48h.xlsx", sheet=3)
+str(leo)
+
+# Preparar variables categóricas ----
+leo$Ven_dosis <- as.factor(leo$Ven_dosis)
+leo$time <- as.factor(leo$time)
+leo$group <- as.factor(leo$group)
+
+# Convertir dosis a numérica para análisis logarítmico
+leo$Ven_dosis <- as.numeric(as.character(leo$Ven_dosis))
+
+# Transformar a formato largo ----
+leo_long <- leo %>%
+  pivot_longer(cols = starts_with("n"), names_to = "replicate", values_to = "value")
+
+# Calcular media y desviación estándar por condición ----
+leo_summary <- leo_long %>%
+  group_by(Ven_dosis, time, group) %>%
+  summarise(
+    mean_value = mean(value, na.rm = TRUE),
+    sd_value = sd(value, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Gráfico descriptivo ----
+ggplot(leo_summary, aes(x = Ven_dosis, y = mean_value, group = time, color = time)) +
+  geom_line(aes(linetype = time), size = 1.3) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = mean_value - sd_value, ymax = mean_value + sd_value),
+                width = 0.1, size = 1) +
+  facet_wrap(~ group) +
+  scale_x_log10(
+    breaks = c(2.5e-6, 2.5e-5, 2.5e-4, 2.5e-3, 2.5e-2, 2.5e-1, 2.5, 25),
+    labels = c("0.0000025", "0.000025", "0.00025", "0.0025", "0.025", "0.25", "2.5", "25")
+  ) +
+  labs(
+    title = "Promedio de muerte celular según dosis venetoclax, combinación con BIA y tiempo",
+    x = "Venetoclax dosis (log10 escala µM)",
+    y = "Promedio (%) muerte celular (n=4)"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Texto en eje X diagonal
+  )
+
+# MODELO 1: Dosis como factor ----
+
+modelo <- lmer(
+  value ~ Ven_dosis * time * group + (1 | Ven_dosis:time:group),
+  data = leo_long
+)
+
+summary(modelo)
+
+# Comparaciones post hoc ----
+emm <- emmeans(modelo, ~ Ven_dosis * time * group)
+
+comparaciones_time <- contrast(emm, method = "pairwise", by = c("Ven_dosis", "group"), adjust = "bonferroni")
+comparaciones_group <- contrast(emm, method = "pairwise", by = c("Ven_dosis", "time"), adjust = "bonferroni")
+
+comparaciones_group_df <- as.data.frame(summary(comparaciones_group)) %>%
+  mutate(signif = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01 ~ "**",
+    p.value < 0.05 ~ "*",
+    TRUE ~ "ns"
+  ))
+
+# ANOVA tipo III ----
+Anova(modelo, type = 3)
+
+# Resultado: Ven_dosis es significativo (*p < 0.05*), indicando que las diferentes dosis 
+# tienen un efecto significativo sobre la muerte celular.
+# Ni tiempo ni grupo, ni las interacciones fueron significativas en este modelo.
+
+# Preparar etiquetas de significancia (Ven vs Ven+BIA25) ----
+etiquetas_group <- comparaciones_group_df %>%
+  filter(contrast == "Ven - (Ven + Bia 25)") %>%
+  dplyr::select(Ven_dosis, time, signif) %>%
+  rename(sig_group = signif)
+
+leo_summary_annot <- leo_summary %>%
+  left_join(etiquetas_group, by = c("Ven_dosis", "time")) %>%
+  mutate(sig_group = ifelse(is.na(sig_group) | sig_group == "ns", "", sig_group))
+
+# Gráfico con etiquetas (modelo dosis factor) ----
+ggplot(leo_summary_annot, aes(x = Ven_dosis, y = mean_value, group = time, color = time)) +
+  geom_line(aes(linetype = time), size = 1.3) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = mean_value - sd_value, ymax = mean_value + sd_value),
+                width = 0.1, size = 1) +
+  geom_text(aes(label = sig_group), vjust = -1.5, size = 5) +
+  facet_wrap(~ group) +
+  scale_x_log10(
+    breaks = c(2.5e-6, 2.5e-5, 2.5e-4, 2.5e-3, 2.5e-2, 2.5e-1, 2.5, 25),
+    labels = c("0.0000025", "0.000025", "0.00025", "0.0025", "0.025", "0.25", "2.5", "25")
+  ) +
+  labs(
+    title = "Muerte celular según dosis Venetoclax (factorial)",
+    x = "Venetoclax dosis (log10 escala µM)",
+    y = "Promedio (%) muerte celular (n=4)"
+  ) +
+  theme_minimal(base_size = 16)
+
+# RESULTADO:
+# La dosis tiene un efecto significativo. 
+# Ni el tiempo ni los grupos experimentales mostraron diferencias significativas globales.
+# En las comparaciones puntuales (Ven vs Ven+BIA25), no se detectaron diferencias significativas en la mayoría de las dosis.
+
+# MODELO 2: Dosis continua (logVen_dosis) ----
+
+# Crear variable logarítmica ----
+leo_long$Ven_dosis <- as.numeric(as.character(leo_long$Ven_dosis))
+leo_long$logVen_dosis <- log10(leo_long$Ven_dosis)
+
+# Ajustar modelo ----
+modelo_log <- lmer(
+  value ~ logVen_dosis * time * group + (1 | logVen_dosis:time:group),
+  data = leo_long
+)
+
+# ANOVA tipo III ----
+Anova(modelo_log, type = 3)
+
+# RESULTADO:
+# logVen_dosis es  significativo (p < 0.001): 
+##         La dosis logarítmica tiene un efecto fuerte sobre la muerte celular.
+
+# Grupo también es significativo (p < 0.05): 
+##         Existen diferencias globales entre los grupos experimentales.
+
+# Tiempo y todas las interacciones no fueron significativas.
+
+# Comparaciones post hoc para el modelo log ----
+emm_log <- emmeans(modelo_log, ~ logVen_dosis * time * group)
+
+comparaciones_time_log <- contrast(
+  emm_log, method = "pairwise",
+  by = c("logVen_dosis", "group"),
+  adjust = "bonferroni"
+)
+
+comparaciones_group_log <- contrast(
+  emm_log, method = "pairwise",
+  by = c("logVen_dosis", "time"),
+  adjust = "bonferroni"
+)
+
+comparaciones_group_log_df <- as.data.frame(summary(comparaciones_group_log)) %>%
+  mutate(signif = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01 ~ "**",
+    p.value < 0.05 ~ "*",
+    TRUE ~ "ns"
+  ))
+
+# Preparar etiquetas (Ven vs Ven+BIA25) ----
+etiquetas_group_log <- comparaciones_group_log_df %>%
+  filter(contrast == "Ven - (Ven + Bia 25)") %>%
+  dplyr::select(logVen_dosis, time, signif) %>%
+  rename(sig_group = signif)
+
+leo_summary$logVen_dosis <- log10(leo_summary$Ven_dosis)
+
+leo_summary_annot_log <- leo_summary %>%
+  left_join(etiquetas_group_log, by = c("logVen_dosis", "time")) %>%
+  mutate(sig_group = ifelse(is.na(sig_group) | sig_group == "ns", "", sig_group))
+
+# Gráfico final con modelo continuo (logVen_dosis) ----
+ggplot(leo_summary_annot_log, aes(x = Ven_dosis, y = mean_value, group = time, color = time)) +
+  geom_line(aes(linetype = time), size = 1.3) +
+  geom_point(size = 4) +
+  geom_errorbar(aes(ymin = mean_value - sd_value, ymax = mean_value + sd_value),
+                width = 0.1, size = 1) +
+  geom_text(aes(label = sig_group), vjust = -1.5, size = 5) +
+  facet_wrap(~ group) +
+  scale_x_log10(
+    breaks = c(2.5e-6, 2.5e-5, 2.5e-4, 2.5e-3, 2.5e-2, 2.5e-1, 2.5, 25),
+    labels = c("0.0000025", "0.000025", "0.00025", "0.0025", "0.025", "0.25", "2.5", "25")
+  ) +
+  labs(
+    title = "Muerte celular según dosis Venetoclax (modelo continuo log)",
+    x = "Venetoclax dosis (log10 escala µM)",
+    y = "Promedio (%) muerte celular (n=4)"
+  ) +
+  theme_minimal(base_size = 16)
+
+# INTERPRETACIÓN FINAL:
+
+# 1. La dosis logarítmica (logVen_dosis) tiene un efecto altamente significativo sobre la muerte celular.
+Anova(modelo_log, type = 3)
+summary(modelo_log)
+
+
+# 2. El grupo experimental tiene un efecto significativo (Ven frente a combinaciones con BIA).
+Anova(modelo_log, type = 3)
+summary(modelo_log)
+  
+
+# 3. El tiempo (24h vs 48h) y las interacciones no mostraron efectos significativos.
+
+# 4. Las comparaciones específicas mostraron pocas diferencias significativas en dosis particulares (reflejadas en los asteriscos del gráfico).
+
+
+###############################
+
+# logVen_dosis:	
+## Estimate: 12.73 (p< 0.001)	
+##### Por cada unidad de aumento en logVen_dosis, aumenta un 12.7% la muerte celular.
+
+
+# time48:
+## Estimate: 3.50	(p= 0.68)	NS.
+
+
+# Ven + BIA 10:
+## Estimate: -20.73	(p=0.020)
+##### Ven + Bia 10 tiene ~20.7% menos muerte celular que Venetoclax solo.
+
+
+
+# Ven + Bia 25:
+## Estimate: -23.07	(p=0.010)
+##### Ven + BIA 25 tiene ~23.1% menos muerte celular que Venetoclax solo.
+
+# Ninguna interacción fue significativa
+# No cambian la relación dosis-respuesta según tiempo ni grupo.
+
+
+
+# La dosis logarítmica (logVen_dosis) tuvo un efecto altamente significativo (p < 0.001),
+# con un incremento estimado de 12.7% en muerte celular por cada unidad de logVen_dosis. 
+# Además, el grupo experimental mostró un efecto significativo (p = 0.012), 
+# con reducciones de muerte celular de 20.7% y 23.1% en las combinaciones Ven+Bia 10 y 
+# Ven+Bia 25, respectivamente, en comparación con Ven solo.
+# No se observaron efectos significativos del tiempo ni de las interacciones entre factores.
